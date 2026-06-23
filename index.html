@@ -223,6 +223,7 @@
   </div>
   <div class="header-tabs">
     <button class="tab-btn active" onclick="showView('main')">거래 목록</button>
+    <button class="tab-btn" onclick="showView('ledger')">가계부</button>
     <button class="tab-btn" onclick="showView('archive')">아카이브</button>
   </div>
 </header>
@@ -239,6 +240,7 @@
           <div class="form-group"><label>구매가액 (원)</label><input type="text" id="f-purchase" placeholder="1,200,000" inputmode="numeric"></div>
           <div class="form-group"><label>포인트 사용액 (P)</label><input type="text" id="f-pointsused" placeholder="0" inputmode="numeric"></div>
           <div class="form-group"><label>정산금액 (원, 전액현금)</label><input type="text" id="f-settlement" placeholder="1,284,900" inputmode="numeric"></div>
+          <div class="form-group"><label>정산일 (비우면 자동)</label><input type="date" id="f-settled"></div>
           <div class="form-group"><label>1차 캐시백 (P)</label><input type="text" id="f-cb1" placeholder="29,079" inputmode="numeric"></div>
           <div class="form-group"><label>2차 캐시백 (P)</label><input type="text" id="f-cb2" placeholder="30,000" inputmode="numeric"></div>
         </div>
@@ -284,6 +286,15 @@
   </div>
 </div>
 
+<div id="view-ledger" class="archive-view hidden">
+  <div class="month-nav" style="max-width:420px;margin-bottom:16px">
+    <button onclick="changeLedgerMonth(-1)">&#8249;</button>
+    <span class="month-label" id="ledger-month-label">—</span>
+    <button onclick="changeLedgerMonth(1)">&#8250;</button>
+  </div>
+  <div id="ledger-content"><div class="archive-empty">이번 달 현금/포인트 흐름이 없습니다.</div></div>
+</div>
+
 <div id="view-archive" class="archive-view hidden">
   <div class="section-title" style="margin-bottom:16px">아카이브</div>
   <div id="archive-content"><div class="archive-empty">아카이브된 항목이 없습니다.</div></div>
@@ -326,7 +337,7 @@
 const STORAGE_KEY = 'cashback_trades';
 const SCRIPT_KEY  = 'cashback_script_url';
 
-let trades = [], currentMonth = new Date(), modalCallback = null, accordionOpen = false, scriptUrl = '';
+let trades = [], currentMonth = new Date(), ledgerMonth = new Date(), modalCallback = null, accordionOpen = false, scriptUrl = '';
 
 /* Toast */
 function showToast(msg, type) {
@@ -387,6 +398,7 @@ function localLoad() {
 /* 기존 데이터 호환: pointsUsed 없으면 0으로 채움 */
 function migrate(t) {
   if (t.pointsUsed === undefined) t.pointsUsed = 0;
+  if (t.settledAt === undefined) t.settledAt = nextBusinessDay(t.createdAt);
   return t;
 }
 
@@ -427,6 +439,13 @@ function fmtDate(iso) {
   return d.getFullYear()+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getDate()).padStart(2,'0');
 }
 function todayISO() { return new Date().toISOString().slice(0,10); }
+function nextBusinessDay(iso) {
+  const d = new Date(iso); d.setDate(d.getDate()+1);
+  const day = d.getDay();
+  if (day===6) d.setDate(d.getDate()+2);      /* 토 → 월 */
+  else if (day===0) d.setDate(d.getDate()+1); /* 일 → 월 */
+  return d.toISOString().slice(0,10);
+}
 function isSameMonth(iso, ref) { const d=new Date(iso); return d.getFullYear()===ref.getFullYear()&&d.getMonth()===ref.getMonth(); }
 function colorClass(n) { return n>0?'positive':n<0?'negative':'neutral'; }
 
@@ -476,13 +495,14 @@ function addTrade() {
   const settlement=parseNum(document.getElementById('f-settlement').value);
   const cb1=parseNum(document.getElementById('f-cb1').value);
   const cb2=parseNum(document.getElementById('f-cb2').value);
+  let settledAt=document.getElementById('f-settled').value||nextBusinessDay(todayISO());
   if (!name||!purchase||!settlement) { showToast('물품명, 구매가액, 정산금액은 필수입니다.','error'); return; }
   trades.unshift({id:uuid(),createdAt:todayISO(),itemName:name,
-    purchasePrice:purchase,pointsUsed:ptsUsed,settlementAmount:settlement,
+    purchasePrice:purchase,pointsUsed:ptsUsed,settlementAmount:settlement,settledAt:settledAt,
     cashback1Amount:cb1,cashback1Received:false,cashback1ReceivedAt:null,
     cashback2Amount:cb2,cashback2Received:false,cashback2ReceivedAt:null,status:'active'});
   save();
-  ['f-name','f-purchase','f-pointsused','f-settlement','f-cb1','f-cb2'].forEach(id=>document.getElementById(id).value='');
+  ['f-name','f-purchase','f-pointsused','f-settlement','f-cb1','f-cb2','f-settled'].forEach(id=>document.getElementById(id).value='');
   updateFormPreview();
   render();
 }
@@ -559,9 +579,12 @@ function toggleAccordion() {
 /* View */
 function showView(v) {
   document.getElementById('view-main').classList.toggle('hidden',v!=='main');
+  document.getElementById('view-ledger').classList.toggle('hidden',v!=='ledger');
   document.getElementById('view-archive').classList.toggle('hidden',v!=='archive');
-  document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active',(i===0&&v==='main')||(i===1&&v==='archive')));
+  const order={main:0,ledger:1,archive:2};
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active',i===order[v]));
   if(v==='archive') renderArchive();
+  if(v==='ledger') renderLedger();
 }
 
 /* Modal */
@@ -602,7 +625,7 @@ function renderCard(t,isCompleted) {
     <div class="card-financials">
       <div class="fin-item"><span class="fin-label">구매가액</span><span class="fin-value neutral edit-purchase">${t.purchasePrice.toLocaleString('ko-KR')}</span></div>
       <div class="fin-item"><span class="fin-label">포인트사용</span><span class="fin-value neutral edit-pointsused">${t.pointsUsed.toLocaleString('ko-KR')}</span></div>
-      <div class="fin-item"><span class="fin-label">정산금액</span><span class="fin-value neutral edit-settlement">${t.settlementAmount.toLocaleString('ko-KR')}</span></div>
+      <div class="fin-item"><span class="fin-label">정산금액</span><span class="fin-value neutral edit-settlement">${t.settlementAmount.toLocaleString('ko-KR')}</span><span style="font-size:9px;color:var(--muted-dim);margin-top:1px">정산 ${t.settledAt ? t.settledAt.slice(5).replace('-','/') : '—'}</span></div>
     </div>
     <div class="cashback-rows">
       <div class="cashback-row">
@@ -701,6 +724,72 @@ function renderSummary() {
   const ab=document.getElementById('archive-btn');
   ab.disabled=cc===0;
   ab.textContent=cc>0?ms+' 완료 항목 아카이브 ('+cc+'건)':'아카이브할 완료 항목 없음';
+}
+
+/* Ledger render: 날짜별 현금/포인트 흐름 (수령 체크된 것만) */
+function changeLedgerMonth(d){ ledgerMonth=new Date(ledgerMonth.getFullYear(),ledgerMonth.getMonth()+d,1); renderLedger(); }
+
+function renderLedger() {
+  const ms=ledgerMonth.getFullYear()+'년 '+(ledgerMonth.getMonth()+1)+'월';
+  document.getElementById('ledger-month-label').textContent=ms;
+  const content=document.getElementById('ledger-content');
+
+  /* 모든 거래(아카이브 포함)에서 이벤트 수집 */
+  const events=[];  /* {date, type, label, cash, pts, item} */
+  trades.forEach(t=>{
+    /* ① 구매: 나간 현금 + 쓴 포인트 (구매일) */
+    const cashOut=t.purchasePrice - t.pointsUsed;
+    events.push({date:t.createdAt, kind:'buy', item:t.itemName, cash:-cashOut, pts:-t.pointsUsed});
+    /* ③ 정산: 들어온 현금 (정산일) */
+    events.push({date:t.settledAt, kind:'settle', item:t.itemName, cash:t.settlementAmount, pts:0});
+    /* ④ 캐시백: 받은 포인트 (수령 체크된 것만, 수령일) */
+    if(t.cashback1Received && t.cashback1ReceivedAt)
+      events.push({date:t.cashback1ReceivedAt.slice(0,10), kind:'cb1', item:t.itemName, cash:0, pts:t.cashback1Amount});
+    if(t.cashback2Received && t.cashback2ReceivedAt)
+      events.push({date:t.cashback2ReceivedAt.slice(0,10), kind:'cb2', item:t.itemName, cash:0, pts:t.cashback2Amount});
+  });
+
+  /* 해당 월 필터 */
+  const monthEvents=events.filter(e=>e.date && isSameMonth(e.date, ledgerMonth));
+  if(!monthEvents.length){ content.innerHTML='<div class="archive-empty">이번 달 현금/포인트 흐름이 없습니다.</div>'; return; }
+
+  /* 날짜별 그룹 */
+  const byDate={};
+  monthEvents.forEach(e=>{ (byDate[e.date]=byDate[e.date]||[]).push(e); });
+
+  const kindLabel={buy:'구매 (현금/포인트 사용)', settle:'정산 입금', cb1:'1차 캐시백', cb2:'2차 캐시백'};
+
+  content.innerHTML='';
+  Object.keys(byDate).sort().forEach(date=>{
+    const evs=byDate[date];
+    const dayCash=evs.reduce((s,e)=>s+e.cash,0);
+    const dayPts=evs.reduce((s,e)=>s+e.pts,0);
+    const d=new Date(date);
+    const wd=['일','월','화','수','목','금','토'][d.getDay()];
+    const sec=document.createElement('div'); sec.className='archive-month-section';
+    sec.innerHTML=`<div class="archive-month-toggle" style="cursor:default">
+        <span>${date.replace(/-/g,'.')} (${wd})</span>
+        <span style="font-size:12px;color:var(--muted-dim)">현금 ${fmtSigned(dayCash)}원 · 포인트 ${fmtSigned(dayPts)}P</span>
+      </div>
+      <div class="archive-month-body open" style="padding-top:8px">
+        <table class="breakdown-table">
+          <thead><tr><th>구분</th><th>물품</th><th>현금</th><th>포인트</th></tr></thead>
+          <tbody>${evs.map(e=>
+            '<tr><td>'+kindLabel[e.kind]+'</td>'+
+            '<td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+e.item+'</td>'+
+            '<td style="color:'+(e.cash>0?'var(--accent)':e.cash<0?'var(--red)':'var(--muted-dim)')+'">'+(e.cash?fmtSigned(e.cash):'—')+'</td>'+
+            '<td style="color:'+(e.pts>0?'var(--blue)':e.pts<0?'var(--red)':'var(--muted-dim)')+'">'+(e.pts?fmtSigned(e.pts):'—')+'</td></tr>'
+          ).join('')}
+          <tr style="border-top:2px solid var(--border)">
+            <td colspan="2" style="font-weight:600;color:var(--muted)">그날 합산</td>
+            <td style="font-weight:700;color:${dayCash>=0?'var(--accent)':'var(--red)'}">${fmtSigned(dayCash)}</td>
+            <td style="font-weight:700;color:${dayPts>=0?'var(--blue)':'var(--red)'}">${fmtSigned(dayPts)}</td>
+          </tr>
+          </tbody>
+        </table>
+      </div>`;
+    content.appendChild(sec);
+  });
 }
 
 /* Archive render */
