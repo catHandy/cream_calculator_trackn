@@ -92,6 +92,7 @@
   .accordion-body{display:none}.accordion-body.open{display:block}
 
   /* Form */
+  .form-sticky{position:sticky;top:0;z-index:50;background:var(--bg);border-bottom:1px solid var(--border)}
   .add-form{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px}
   .form-title{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.6px}
   .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
@@ -228,18 +229,7 @@
 
 <div id="view-main" class="app-body">
   <div class="left-panel">
-    <div class="panel-section">
-      <div class="section-title">진행 중</div>
-      <div id="active-list"><div class="empty-state">아직 등록된 거래가 없습니다.<br>아래 폼에서 추가하세요.</div></div>
-    </div>
-    <div class="panel-section">
-      <button class="accordion-toggle" id="completed-toggle" onclick="toggleAccordion()">
-        <span id="completed-toggle-label">이번 달 완료 (0건)</span>
-        <span class="accordion-arrow">▼</span>
-      </button>
-      <div class="accordion-body" id="completed-body"><div id="completed-list"></div></div>
-    </div>
-    <div class="panel-section">
+    <div class="panel-section form-sticky">
       <div class="add-form">
         <div class="form-title">새 거래 추가</div>
         <div class="form-grid full">
@@ -258,6 +248,17 @@
         </div>
         <button class="btn-add" onclick="addTrade()">거래 추가</button>
       </div>
+    </div>
+    <div class="panel-section">
+      <div class="section-title">진행 중</div>
+      <div id="active-list"><div class="empty-state">아직 등록된 거래가 없습니다.<br>위 폼에서 추가하세요.</div></div>
+    </div>
+    <div class="panel-section">
+      <button class="accordion-toggle" id="completed-toggle" onclick="toggleAccordion()">
+        <span id="completed-toggle-label">이번 달 완료 (0건)</span>
+        <span class="accordion-arrow">▼</span>
+      </button>
+      <div class="accordion-body" id="completed-body"><div id="completed-list"></div></div>
     </div>
   </div>
 
@@ -638,7 +639,7 @@ function render() {
   const at=trades.filter(t=>t.status==='active');
   const ct=trades.filter(t=>t.status==='completed'&&isSameMonth(t.createdAt,currentMonth));
   al.innerHTML='';
-  if(!at.length) al.innerHTML='<div class="empty-state">아직 등록된 거래가 없습니다.<br>아래 폼에서 추가하세요.</div>';
+  if(!at.length) al.innerHTML='<div class="empty-state">아직 등록된 거래가 없습니다.<br>위 폼에서 추가하세요.</div>';
   else at.forEach(t=>al.appendChild(renderCard(t,false)));
   document.getElementById('completed-toggle-label').textContent='이번 달 완료 ('+ct.length+'건)';
   cl.innerHTML='';
